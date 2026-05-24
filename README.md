@@ -102,6 +102,94 @@ Restart Claude Desktop. The bridge must already be running (otherwise the MCP to
 Easiest: drop a shortcut to `start-bridge.bat` in
 `shell:startup` (press Win+R, type `shell:startup`, Enter).
 
+## Deploy to a 24/7 Linux VM
+
+You don't need your PC running — host the bridge on any cheap Linux VM
+(DigitalOcean / Hetzner / Oracle Free Tier / your own VPS). 1 vCPU + 1 GB
+RAM is enough (Chromium is the heaviest part — add swap if you have only
+512 MB).
+
+WhatsApp Multi-Device keeps the linked session alive on Meta's servers,
+so your phone does **not** need to be online for the VM to keep receiving
+messages.
+
+### Option A — one-shot installer (Ubuntu / Debian)
+
+SSH into the VM as root (or use `sudo`), then:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jaafarsadeq/Mytest/claude/whatsapp-mcp-notifications-5syJ9/deploy/install-ubuntu.sh | sudo bash
+sudo nano /opt/whatsapp-mcp/.env          # set NTFY_TOPIC and PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+sudo systemctl start whatsapp-bridge
+sudo journalctl -u whatsapp-bridge -f     # watch logs — scan the QR shown here
+```
+
+After you see `[wa] client ready.` you're done — messages flow to your
+phone via ntfy.sh. The systemd service auto-restarts on crash and on
+reboot.
+
+Useful commands:
+
+```bash
+sudo systemctl status whatsapp-bridge    # is it up?
+sudo systemctl restart whatsapp-bridge
+sudo journalctl -u whatsapp-bridge -f    # follow logs (and re-show QR if needed)
+```
+
+If the QR ever needs to be re-scanned (re-linking from your phone wipes
+the session), it will reappear in the logs.
+
+### Option B — Docker / docker-compose
+
+```bash
+git clone https://github.com/jaafarsadeq/Mytest.git
+cd Mytest && git checkout claude/whatsapp-mcp-notifications-5syJ9
+cp .env.example .env && nano .env        # set NTFY_TOPIC
+docker compose up -d
+docker compose logs -f                   # scan QR from these logs on first run
+```
+
+The `data/` directory on the host holds both the SQLite DB and the
+WhatsApp Web session, so the container can be rebuilt without re-linking.
+
+### Using the MCP server from a different machine
+
+The MCP server is a stdio process — Claude Desktop launches it locally.
+If your **bridge** is on a remote VM, you have two options:
+
+**SSH tunnel (simplest, no extra auth)** — on your laptop:
+
+```bash
+ssh -N -L 3037:127.0.0.1:3037 user@your-vm
+```
+
+Then in `claude_desktop_config.json` point the MCP server at the local
+end of the tunnel (it already defaults to `127.0.0.1:3037`).
+
+**Direct, with a token** — on the VM set `BRIDGE_HOST=0.0.0.0` and
+`BRIDGE_TOKEN=<long random string>` in `.env`, open port 3037 in the
+firewall, and on your laptop run the MCP server with environment
+variables:
+
+```json
+{
+  "mcpServers": {
+    "whatsapp": {
+      "command": "node",
+      "args": ["C:\\path\\to\\Mytest\\src\\mcp-server.js"],
+      "env": {
+        "BRIDGE_URL": "http://your-vm-ip:3037",
+        "BRIDGE_TOKEN": "the-same-token"
+      }
+    }
+  }
+}
+```
+
+Use the SSH tunnel option unless you know what you're doing — exposing
+3037 to the public internet without a token would let anyone send
+WhatsApp messages as you.
+
 ## Files
 
 - `src/config.js` — env loading

@@ -6,14 +6,19 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { bridgeBaseUrl } from './config.js';
 
-const BRIDGE = bridgeBaseUrl();
+const BRIDGE = process.env.BRIDGE_URL || bridgeBaseUrl();
+const TOKEN = process.env.BRIDGE_TOKEN || '';
+
+function authHeaders(extra = {}) {
+  return TOKEN ? { ...extra, Authorization: `Bearer ${TOKEN}` } : extra;
+}
 
 async function bridgeGet(pathname, params = {}) {
   const url = new URL(BRIDGE + pathname);
   for (const [k, v] of Object.entries(params)) {
     if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, String(v));
   }
-  const res = await fetch(url);
+  const res = await fetch(url, { headers: authHeaders() });
   if (!res.ok) throw new Error(`bridge ${pathname} -> HTTP ${res.status}`);
   return res.json();
 }
@@ -21,7 +26,7 @@ async function bridgeGet(pathname, params = {}) {
 async function bridgePost(pathname, body) {
   const res = await fetch(BRIDGE + pathname, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(body),
   });
   const data = await res.json().catch(() => ({}));

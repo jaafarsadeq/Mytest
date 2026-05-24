@@ -25,6 +25,7 @@ export const config = {
   bridge: {
     port: Number(process.env.BRIDGE_PORT || 3037),
     host: process.env.BRIDGE_HOST || '127.0.0.1',
+    token: process.env.BRIDGE_TOKEN || '',
   },
   filters: {
     muteChats: parseList(process.env.MUTE_CHATS),

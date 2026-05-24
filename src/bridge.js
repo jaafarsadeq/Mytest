@@ -11,12 +11,17 @@ const { Client, LocalAuth } = pkg;
 
 fs.mkdirSync(config.sessionPath, { recursive: true });
 
+const puppeteerOpts = {
+  headless: true,
+  args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+};
+if (process.env.PUPPETEER_EXECUTABLE_PATH) {
+  puppeteerOpts.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
+}
+
 const client = new Client({
   authStrategy: new LocalAuth({ dataPath: config.sessionPath }),
-  puppeteer: {
-    headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox'],
-  },
+  puppeteer: puppeteerOpts,
 });
 
 let clientReady = false;
@@ -166,6 +171,17 @@ function normalizeChatId(input) {
   const digits = s.replace(/\D/g, '');
   if (!digits) throw new Error(`invalid chat id: ${input}`);
   return `${digits}@c.us`;
+}
+
+if (config.bridge.token) {
+  app.use((req, res, next) => {
+    if (req.path === '/health') return next();
+    const auth = req.headers.authorization || '';
+    if (auth !== `Bearer ${config.bridge.token}`) {
+      return res.status(401).json({ error: 'unauthorized' });
+    }
+    next();
+  });
 }
 
 app.listen(config.bridge.port, config.bridge.host, () => {

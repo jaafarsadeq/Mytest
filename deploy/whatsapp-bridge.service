@@ -1,0 +1,26 @@
+[Unit]
+Description=WhatsApp MCP Bridge (whatsapp-web.js + ntfy forwarder)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=whatsapp
+Group=whatsapp
+WorkingDirectory=/opt/whatsapp-mcp
+EnvironmentFile=/opt/whatsapp-mcp/.env
+ExecStart=/usr/bin/node /opt/whatsapp-mcp/src/bridge.js
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/opt/whatsapp-mcp/data
+
+[Install]
+WantedBy=multi-user.target
