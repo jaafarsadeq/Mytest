@@ -3,9 +3,20 @@ import path from 'node:path';
 import express from 'express';
 import qrcode from 'qrcode-terminal';
 import pkg from 'whatsapp-web.js';
-import { config } from './config.js';
-import { saveMessage, upsertChat, listChats, getRecentMessages, searchMessages } from './db.js';
+import { config, priorityRank } from './config.js';
+import {
+  saveMessage,
+  upsertChat,
+  listChats,
+  getRecentMessages,
+  searchMessages,
+  getChatContext,
+  updateMessageAi,
+  getMessageById,
+} from './db.js';
 import { sendNtfy } from './ntfy.js';
+import { downloadMedia, mediaPathFor } from './media.js';
+import { scoreMessage, suggestReplies, describeImage } from './ai.js';
 
 const { Client, LocalAuth } = pkg;
 
@@ -84,7 +95,7 @@ async function handleIncoming(message) {
     saveMessage(row);
 
     if (shouldNotify(row)) {
-      await pushToPhone(row);
+      await enrichAndPush(row, message);
     }
   } catch (err) {
     console.error('[wa] handleIncoming failed:', err.message);
@@ -102,20 +113,131 @@ function shouldNotify(row) {
   return true;
 }
 
-async function pushToPhone(row) {
+async function enrichAndPush(row, message) {
+  let mediaInfo = null;
+  let bodyForPush = row.body || '';
+
+  if (row.has_media) {
+    mediaInfo = await downloadMedia(message);
+    if (mediaInfo) {
+      updateMessageAi({ id: row.id, media_path: mediaInfo.filename });
+      if (mediaInfo.kind === 'image') {
+        const summary = await describeImage({
+          mediaPath: mediaInfo.path,
+          mimetype: mediaInfo.mimetype,
+          caption: row.body,
+          senderName: row.sender_name,
+        });
+        if (summary) {
+          updateMessageAi({ id: row.id, ai_summary: summary });
+          if (!bodyForPush) bodyForPush = summary;
+        }
+      }
+      if (!bodyForPush) {
+        bodyForPush = mediaPlaceholder(mediaInfo.kind);
+      }
+    } else if (!bodyForPush) {
+      bodyForPush = `[${row.type || 'media'}]`;
+    }
+  }
+
+  const context = getChatContext({
+    chatId: row.chat_id,
+    limit: 10,
+    beforeTs: row.timestamp,
+  });
+
+  const scored = await scoreMessage({
+    chatName: row.chat_name,
+    senderName: row.sender_name,
+    body: bodyForPush,
+    isGroup: !!row.is_group,
+    recentContext: context,
+  });
+  const priority = scored?.priority || 'normal';
+  updateMessageAi({ id: row.id, priority });
+
+  if (priorityRank(priority) < priorityRank(config.ai.priorityFloor)) {
+    return;
+  }
+
+  let replies = [];
+  const repliesAllowedHere = !row.is_group || config.ai.repliesInGroups;
+  if (repliesAllowedHere) {
+    replies = await suggestReplies({
+      chatName: row.chat_name,
+      senderName: row.sender_name,
+      body: bodyForPush,
+      recentContext: context,
+    });
+  }
+
+  await pushToPhone({ row, bodyForPush, priority, mediaInfo, replies });
+}
+
+function mediaPlaceholder(kind) {
+  switch (kind) {
+    case 'image': return '[image]';
+    case 'audio': return '[voice note]';
+    case 'video': return '[video]';
+    case 'document': return '[document]';
+    default: return '[media]';
+  }
+}
+
+const NTFY_PRIORITY = { low: 'low', normal: 'default', urgent: 'max' };
+
+async function pushToPhone({ row, bodyForPush, priority, mediaInfo, replies }) {
   const isGroup = !!row.is_group;
   const title = isGroup
     ? `${row.chat_name} — ${row.sender_name}`
     : row.sender_name || row.chat_name;
-  let body = row.body || '';
-  if (!body && row.has_media) body = `[${row.type || 'media'}]`;
+
+  let body = bodyForPush || '';
   if (body.length > 400) body = `${body.slice(0, 397)}...`;
 
   const tags = ['speech_balloon'];
   if (isGroup) tags.push('busts_in_silhouette');
-  if (row.has_media) tags.push('frame_with_picture');
+  if (mediaInfo?.kind === 'image') tags.push('frame_with_picture');
+  if (mediaInfo?.kind === 'audio') tags.push('studio_microphone');
+  if (priority === 'urgent') tags.push('rotating_light');
 
-  await sendNtfy({ title, message: body, tags, priority: 'default' });
+  let attachUrl;
+  if (mediaInfo && mediaInfo.kind === 'image' && !mediaInfo.tooLargeToAttach && publicMediaUrl(mediaInfo)) {
+    attachUrl = publicMediaUrl(mediaInfo);
+  } else if (mediaInfo?.tooLargeToAttach) {
+    console.warn(`[bridge] media too large to attach (${mediaInfo.sizeBytes} bytes)`);
+  }
+
+  const actions = buildReplyActions(row, replies);
+
+  await sendNtfy({
+    title,
+    message: body,
+    tags,
+    priority: NTFY_PRIORITY[priority] || 'default',
+    attachUrl,
+    actions,
+  });
+}
+
+function publicMediaUrl(mediaInfo) {
+  if (!config.publicBridgeUrl || !config.actionToken) return null;
+  const t = encodeURIComponent(config.actionToken);
+  return `${config.publicBridgeUrl}/media/${encodeURIComponent(mediaInfo.filename)}?t=${t}`;
+}
+
+function buildReplyActions(row, replies) {
+  if (!replies?.length) return [];
+  if (!config.publicBridgeUrl || !config.actionToken) return [];
+  const url = `${config.publicBridgeUrl}/reply-action`;
+  return replies.slice(0, 3).map((text) => ({
+    type: 'http',
+    label: text.length > 30 ? `${text.slice(0, 27)}...` : text,
+    url,
+    method: 'POST',
+    bodyJson: { chatId: row.chat_id, text, token: config.actionToken },
+  }));
 }
 
 client.on('message', handleIncoming);
@@ -126,9 +248,48 @@ client.on('message_create', (m) => {
 const app = express();
 app.use(express.json({ limit: '256kb' }));
 
+function requireBridgeAuth(req, res, next) {
+  if (!config.bridge.token) return next();
+  const auth = req.headers.authorization || '';
+  if (auth === `Bearer ${config.bridge.token}`) return next();
+  return res.status(401).json({ error: 'unauthorized' });
+}
+
 app.get('/health', (_req, res) => {
   res.json({ ok: true, ready: clientReady });
 });
+
+app.post('/reply-action', async (req, res) => {
+  const token = req.body?.token || req.query?.t || '';
+  if (!config.actionToken || token !== config.actionToken) {
+    return res.status(401).json({ error: 'unauthorized' });
+  }
+  if (!clientReady) return res.status(503).json({ error: 'wa client not ready' });
+  const { chatId, text } = req.body || {};
+  if (!chatId || !text) {
+    return res.status(400).json({ error: 'chatId and text are required' });
+  }
+  try {
+    const sent = await client.sendMessage(String(chatId), String(text));
+    res.json({ ok: true, id: sent.id?._serialized });
+  } catch (err) {
+    console.error('[bridge] reply-action failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/media/:filename', (req, res) => {
+  const token = String(req.query.t || '');
+  if (!config.actionToken || token !== config.actionToken) {
+    return res.status(401).end();
+  }
+  const safe = path.basename(String(req.params.filename));
+  const fullPath = mediaPathFor(safe);
+  if (!fs.existsSync(fullPath)) return res.status(404).end();
+  res.sendFile(fullPath);
+});
+
+app.use(requireBridgeAuth);
 
 app.get('/chats', (req, res) => {
   const limit = Math.min(Number(req.query.limit) || 50, 500);
@@ -148,6 +309,58 @@ app.get('/messages/search', (req, res) => {
   if (!q) return res.status(400).json({ error: 'q is required' });
   res.json({ messages: searchMessages({ query: q, limit }) });
 });
+
+app.get('/messages/by-id', (req, res) => {
+  const id = String(req.query.id || '');
+  if (!id) return res.status(400).json({ error: 'id is required' });
+  const message = getMessageById(id);
+  if (!message) return res.status(404).json({ error: 'not found' });
+  res.json({ message });
+});
+
+app.post('/ai/suggest-replies', async (req, res) => {
+  const chatId = String(req.body?.chatId || '');
+  if (!chatId) return res.status(400).json({ error: 'chatId is required' });
+  const recent = getRecentMessages({ chatId, limit: 1 });
+  if (!recent.length) return res.status(404).json({ error: 'no messages in chat' });
+  const latest = recent[0];
+  const context = getChatContext({ chatId, limit: 10, beforeTs: latest.timestamp });
+  const replies = await suggestReplies({
+    chatName: latest.chat_name,
+    senderName: latest.sender_name,
+    body: latest.body || latest.ai_summary || '',
+    recentContext: context,
+  });
+  res.json({ replies, message: latest });
+});
+
+app.post('/ai/describe-media', async (req, res) => {
+  const id = String(req.body?.messageId || '');
+  if (!id) return res.status(400).json({ error: 'messageId is required' });
+  const message = getMessageById(id);
+  if (!message) return res.status(404).json({ error: 'not found' });
+  if (message.ai_summary) return res.json({ summary: message.ai_summary, cached: true });
+  if (!message.media_path) return res.status(400).json({ error: 'message has no media' });
+  const fullPath = mediaPathFor(message.media_path);
+  if (!fs.existsSync(fullPath)) return res.status(410).json({ error: 'media file missing' });
+  const summary = await describeImage({
+    mediaPath: fullPath,
+    mimetype: guessMimeFromName(message.media_path),
+    caption: message.body,
+    senderName: message.sender_name,
+  });
+  if (summary) updateMessageAi({ id, ai_summary: summary });
+  res.json({ summary, cached: false });
+});
+
+function guessMimeFromName(name) {
+  const ext = (name.split('.').pop() || '').toLowerCase();
+  if (['jpg', 'jpeg'].includes(ext)) return 'image/jpeg';
+  if (ext === 'png') return 'image/png';
+  if (ext === 'webp') return 'image/webp';
+  if (ext === 'gif') return 'image/gif';
+  return 'image/jpeg';
+}
 
 app.post('/send', async (req, res) => {
   if (!clientReady) return res.status(503).json({ error: 'wa client not ready' });
@@ -171,17 +384,6 @@ function normalizeChatId(input) {
   const digits = s.replace(/\D/g, '');
   if (!digits) throw new Error(`invalid chat id: ${input}`);
   return `${digits}@c.us`;
-}
-
-if (config.bridge.token) {
-  app.use((req, res, next) => {
-    if (req.path === '/health') return next();
-    const auth = req.headers.authorization || '';
-    if (auth !== `Bearer ${config.bridge.token}`) {
-      return res.status(401).json({ error: 'unauthorized' });
-    }
-    next();
-  });
 }
 
 app.listen(config.bridge.port, config.bridge.host, () => {

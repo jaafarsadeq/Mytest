@@ -90,6 +90,42 @@ const tools = [
       additionalProperties: false,
     },
   },
+  {
+    name: 'wa_message_priority',
+    description: 'Return the stored AI-graded priority (low|normal|urgent) and any AI summary for a specific message id.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        messageId: { type: 'string', description: 'WhatsApp message id (e.g. "true_12025550100@c.us_ABC123").' },
+      },
+      required: ['messageId'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'wa_suggest_replies',
+    description: 'Generate three short tap-to-send reply suggestions for the latest message in a chat. Recomputes via Claude on demand.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        chatId: { type: 'string', description: 'WhatsApp chat id (e.g. "...@c.us" or "...@g.us").' },
+      },
+      required: ['chatId'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'wa_describe_media',
+    description: 'Return a one-sentence description of the media attached to a message. Uses the stored AI summary, or computes it via Claude Vision if missing (images only).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        messageId: { type: 'string', description: 'WhatsApp message id.' },
+      },
+      required: ['messageId'],
+      additionalProperties: false,
+    },
+  },
 ];
 
 const server = new Server(
@@ -126,6 +162,12 @@ async function dispatch(name, args) {
       return bridgeGet('/messages/search', { q: args.query, limit: args.limit });
     case 'wa_send_message':
       return bridgePost('/send', { to: args.to, message: args.message });
+    case 'wa_message_priority':
+      return bridgeGet('/messages/by-id', { id: args.messageId });
+    case 'wa_suggest_replies':
+      return bridgePost('/ai/suggest-replies', { chatId: args.chatId });
+    case 'wa_describe_media':
+      return bridgePost('/ai/describe-media', { messageId: args.messageId });
     default:
       throw new Error(`unknown tool: ${name}`);
   }

@@ -34,6 +34,17 @@ db.exec(`
   );
 `);
 
+function ensureColumn(table, column, ddl) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all();
+  if (!cols.some((c) => c.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
+  }
+}
+
+ensureColumn('messages', 'priority', 'TEXT');
+ensureColumn('messages', 'ai_summary', 'TEXT');
+ensureColumn('messages', 'media_path', 'TEXT');
+
 const insertMessageStmt = db.prepare(`
   INSERT OR REPLACE INTO messages
     (id, chat_id, chat_name, is_group, sender_id, sender_name, from_me, body, type, has_media, timestamp)
@@ -104,4 +115,48 @@ export function searchMessages({ query, limit = 50 }) {
       `SELECT * FROM messages WHERE body LIKE ? ORDER BY timestamp DESC LIMIT ?`,
     )
     .all(`%${query}%`, limit);
+}
+
+export function getMessageById(id) {
+  return db.prepare(`SELECT * FROM messages WHERE id = ?`).get(id);
+}
+
+export function getChatContext({ chatId, limit = 10, beforeTs }) {
+  if (beforeTs) {
+    return db
+      .prepare(
+        `SELECT sender_name, from_me, body, timestamp
+           FROM messages
+          WHERE chat_id = ? AND timestamp < ?
+          ORDER BY timestamp DESC LIMIT ?`,
+      )
+      .all(chatId, beforeTs, limit)
+      .reverse();
+  }
+  return db
+    .prepare(
+      `SELECT sender_name, from_me, body, timestamp
+         FROM messages
+        WHERE chat_id = ?
+        ORDER BY timestamp DESC LIMIT ?`,
+    )
+    .all(chatId, limit)
+    .reverse();
+}
+
+const updateAiStmt = db.prepare(`
+  UPDATE messages
+     SET priority = COALESCE(@priority, priority),
+         ai_summary = COALESCE(@ai_summary, ai_summary),
+         media_path = COALESCE(@media_path, media_path)
+   WHERE id = @id
+`);
+
+export function updateMessageAi(fields) {
+  updateAiStmt.run({
+    id: fields.id,
+    priority: fields.priority ?? null,
+    ai_summary: fields.ai_summary ?? null,
+    media_path: fields.media_path ?? null,
+  });
 }
