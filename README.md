@@ -86,6 +86,17 @@ All AI calls are **best-effort**: if they fail (rate limit, bad key,
 timeout) the notification still goes out with default priority and no
 replies. You never lose a message because Claude was slow.
 
+### Group burst summary
+
+A noisy group chat that fires 15 messages in 30 seconds used to mean 15
+phone notifications. With `AI_BURST_ENABLED=true` (default), the bridge
+holds group messages for `AI_BURST_WINDOW_MS` (default 30s), then asks
+Claude to summarize the batch into one notification — including who
+said what, any direct mentions of you, decisions, and action items.
+Bursts that turn out to be small talk are tagged `low` and respect
+`AI_PRIORITY_FLOOR`. Single messages (not part of a burst) flush as
+usual once the window expires, so DMs are unaffected.
+
 ### Tap-to-reply prerequisites
 
 ntfy action buttons are executed by the **app on your phone** — they

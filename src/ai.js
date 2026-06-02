@@ -57,6 +57,16 @@ Respond ONLY with a compact JSON object: {"replies":["...","...","..."]}. No pro
 
 const VISION_SYSTEM = `You describe images attached to WhatsApp messages so the recipient can decide whether to open the chat. One sentence, under 200 characters. If the image contains readable text (a receipt, screenshot, sign), include the gist of that text instead of describing the image generically.`;
 
+const BURST_SYSTEM = `You summarize a short burst of WhatsApp group messages into a single notification preview.
+
+Rules:
+- Output a JSON object {"summary":"...","priority":"urgent|normal|low"}.
+- summary: 1-2 short sentences, under 240 characters total, covering the GIST and any direct mentions of the recipient, questions to them, decisions, or action items. Skip pure chatter.
+- If different senders are saying meaningfully different things, mention who said what.
+- priority: "urgent" only for safety/time-critical content; "normal" for substantive discussion or messages the recipient should see; "low" for pure small-talk bursts where nothing important happened.
+
+Respond ONLY with the JSON object. No prose.`;
+
 function extractText(message) {
   return message.content
     .filter((b) => b.type === 'text')
@@ -142,6 +152,41 @@ ${body || '(no text)'}`;
   } catch (err) {
     logError('suggestReplies', err);
     return [];
+  }
+}
+
+export async function summarizeBurst({ chatName, messages }) {
+  const c = getClient();
+  if (!c) return null;
+  const lines = messages
+    .map((m) => {
+      const who = m.from_me ? 'me' : m.sender_name || 'them';
+      const body = (m.body || '').replace(/\s+/g, ' ').slice(0, 240);
+      return `${who}: ${body}`;
+    })
+    .join('\n');
+  const userPrompt = `Group: ${chatName}
+${messages.length} messages in the last burst:
+
+${lines}`;
+  try {
+    const res = await c.messages.create({
+      model: config.ai.modelSmart,
+      max_tokens: 250,
+      system: [
+        { type: 'text', text: BURST_SYSTEM, cache_control: { type: 'ephemeral' } },
+      ],
+      messages: [{ role: 'user', content: userPrompt }],
+    });
+    const parsed = parseJson(extractText(res));
+    if (!parsed || !parsed.summary) return null;
+    const priority = ['urgent', 'normal', 'low'].includes(parsed.priority)
+      ? parsed.priority
+      : 'normal';
+    return { summary: String(parsed.summary).slice(0, 280), priority };
+  } catch (err) {
+    logError('summarizeBurst', err);
+    return null;
   }
 }
 

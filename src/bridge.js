@@ -16,7 +16,7 @@ import {
 } from './db.js';
 import { sendNtfy } from './ntfy.js';
 import { downloadMedia, mediaPathFor } from './media.js';
-import { scoreMessage, suggestReplies, describeImage } from './ai.js';
+import { scoreMessage, suggestReplies, describeImage, summarizeBurst } from './ai.js';
 
 const { Client, LocalAuth } = pkg;
 
@@ -95,11 +95,79 @@ async function handleIncoming(message) {
     saveMessage(row);
 
     if (shouldNotify(row)) {
-      await enrichAndPush(row, message);
+      if (row.is_group && config.ai.burstEnabled) {
+        bufferForBurst(row, message);
+      } else {
+        await enrichAndPush(row, message);
+      }
     }
   } catch (err) {
     console.error('[wa] handleIncoming failed:', err.message);
   }
+}
+
+const groupBuffers = new Map();
+
+function bufferForBurst(row, message) {
+  let buf = groupBuffers.get(row.chat_id);
+  if (!buf) {
+    buf = { entries: [], timer: null };
+    groupBuffers.set(row.chat_id, buf);
+    buf.timer = setTimeout(() => flushBurst(row.chat_id), config.ai.burstWindowMs);
+  }
+  buf.entries.push({ row, message });
+  if (buf.entries.length >= config.ai.burstMaxBuffer) {
+    clearTimeout(buf.timer);
+    flushBurst(row.chat_id);
+  }
+}
+
+async function flushBurst(chatId) {
+  const buf = groupBuffers.get(chatId);
+  if (!buf) return;
+  groupBuffers.delete(chatId);
+  const entries = buf.entries;
+
+  if (entries.length === 1) {
+    const { row, message } = entries[0];
+    try { await enrichAndPush(row, message); }
+    catch (err) { console.error('[wa] enrichAndPush failed:', err.message); }
+    return;
+  }
+
+  const first = entries[0].row;
+  const summarized = await summarizeBurst({
+    chatName: first.chat_name,
+    messages: entries.map(({ row }) => ({
+      sender_name: row.sender_name,
+      from_me: row.from_me,
+      body: row.body,
+    })),
+  });
+
+  if (!summarized) {
+    // Claude failed — fall back to pushing each message individually.
+    for (const { row, message } of entries) {
+      try { await enrichAndPush(row, message); }
+      catch (err) { console.error('[wa] fallback push failed:', err.message); }
+    }
+    return;
+  }
+
+  for (const { row } of entries) {
+    updateMessageAi({ id: row.id, priority: summarized.priority });
+  }
+
+  if (priorityRank(summarized.priority) < priorityRank(config.ai.priorityFloor)) {
+    return;
+  }
+
+  await sendNtfy({
+    title: `${first.chat_name} — ${entries.length} new messages`,
+    message: summarized.summary,
+    tags: ['speech_balloon', 'busts_in_silhouette', ...(summarized.priority === 'urgent' ? ['rotating_light'] : [])],
+    priority: NTFY_PRIORITY[summarized.priority] || 'default',
+  });
 }
 
 function shouldNotify(row) {
@@ -391,7 +459,14 @@ app.listen(config.bridge.port, config.bridge.host, () => {
 });
 
 console.log('[wa] starting WhatsApp Web client...');
-client.initialize();
+client.initialize().catch((err) => {
+  console.error('[wa] initialize failed:', err.message);
+  console.error('[wa] HTTP API stays up for /health and DB queries; WA features unavailable until restart.');
+});
+
+process.on('unhandledRejection', (err) => {
+  console.error('[wa] unhandled rejection:', err?.message || err);
+});
 
 const shutdown = async (signal) => {
   console.log(`[bridge] received ${signal}, shutting down...`);
