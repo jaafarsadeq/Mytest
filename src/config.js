@@ -49,6 +49,18 @@ export const config = {
     burstEnabled: bool(process.env.AI_BURST_ENABLED, true),
     burstWindowMs: Math.max(2000, Number(process.env.AI_BURST_WINDOW_MS) || 30000),
     burstMaxBuffer: Math.max(2, Number(process.env.AI_BURST_MAX_BUFFER) || 20),
+    providers: {
+      default: (process.env.AI_PROVIDER || 'anthropic').toLowerCase(),
+      priority: (process.env.AI_PROVIDER_PRIORITY || '').toLowerCase() || null,
+      replies: (process.env.AI_PROVIDER_REPLIES || '').toLowerCase() || null,
+      vision: (process.env.AI_PROVIDER_VISION || '').toLowerCase() || null,
+      burst: (process.env.AI_PROVIDER_BURST || '').toLowerCase() || null,
+    },
+  },
+  gemini: {
+    apiKey: process.env.GEMINI_API_KEY || '',
+    modelFast: process.env.GEMINI_MODEL_FAST || 'gemini-2.5-flash',
+    modelSmart: process.env.GEMINI_MODEL_SMART || 'gemini-2.5-pro',
   },
   actionToken: process.env.ACTION_TOKEN || '',
   publicBridgeUrl: (process.env.PUBLIC_BRIDGE_URL || '').replace(/\/$/, ''),

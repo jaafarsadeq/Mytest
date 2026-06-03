@@ -64,10 +64,10 @@ After the scan you should see `[wa] client ready.` Send yourself a WhatsApp mess
 
 Session is cached in `data/wa-session`, so subsequent runs don't need a re-scan.
 
-## Smarter notifications (Claude + image OCR)
+## Smarter notifications (Claude / Gemini, image OCR, burst summary)
 
-Once you set `ANTHROPIC_API_KEY` in `.env`, every incoming message is run
-through Claude for:
+Set `ANTHROPIC_API_KEY` and/or `GEMINI_API_KEY` in `.env`. Each
+incoming message is then run through the configured LLM for:
 
 - **Priority scoring** — each message is tagged `urgent` / `normal` /
   `low` by `claude-haiku-4-5`. The label maps to ntfy priority (`urgent`
@@ -84,7 +84,34 @@ through Claude for:
 
 All AI calls are **best-effort**: if they fail (rate limit, bad key,
 timeout) the notification still goes out with default priority and no
-replies. You never lose a message because Claude was slow.
+replies. You never lose a message because the LLM was slow.
+
+### Picking a provider
+
+| Provider  | Get a key at | Free tier? | Pricing (2026) |
+|-----------|--------------|------------|----------------|
+| Anthropic | https://console.anthropic.com/settings/keys | No (prepaid $5 min) | Haiku 4.5 ~$1/$5 per 1M tokens in/out; Sonnet 4.6 ~$3/$15 |
+| Gemini    | https://aistudio.google.com/apikey | Yes (generous) | Flash 2.5 ~$0.075/$0.30 per 1M; Pro 2.5 ~$1.25/$10 |
+
+**Default** is Anthropic. To switch globally:
+```
+AI_PROVIDER=gemini
+GEMINI_API_KEY=...
+```
+
+**Per-feature routing** is supported — cheap scoring on Gemini Flash,
+quality replies on Claude Sonnet:
+```
+AI_PROVIDER=anthropic
+AI_PROVIDER_PRIORITY=gemini
+AI_PROVIDER_BURST=gemini
+ANTHROPIC_API_KEY=sk-ant-...
+GEMINI_API_KEY=AIza...
+```
+
+The four routable features are `priority`, `replies`, `vision`,
+`burst`. Any unset override falls back to `AI_PROVIDER`. Gemini's free
+tier alone is enough for typical personal use.
 
 ### Group burst summary
 
