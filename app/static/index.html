@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Manpower &amp; Equipment Request System</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header>
+    <h1>Manpower &amp; Equipment Request System</h1>
+    <div id="session" class="session"></div>
+  </header>
+
+  <!-- Login -->
+  <section id="login-view" class="card">
+    <h2>Sign in</h2>
+    <p class="hint">Demo logins: admin/admin123 &middot; client/client123 &middot; supervisor/super123</p>
+    <form id="login-form" class="form-row">
+      <input id="username" placeholder="Username" autocomplete="username" required />
+      <input id="password" type="password" placeholder="Password" autocomplete="current-password" required />
+      <button type="submit">Login</button>
+    </form>
+    <p id="login-error" class="error"></p>
+  </section>
+
+  <!-- App -->
+  <main id="app-view" hidden>
+    <nav class="tabs">
+      <button data-tab="dashboard" class="active">Dashboard</button>
+      <button data-tab="new-request">New Request</button>
+      <button data-tab="requests">Requests</button>
+      <button data-tab="availability">Availability Check</button>
+    </nav>
+
+    <!-- Dashboard -->
+    <section id="tab-dashboard" class="tab card">
+      <h2>Operations Dashboard</h2>
+      <div id="dashboard-cards" class="cards"></div>
+      <table id="dashboard-table">
+        <thead>
+          <tr><th>Project</th><th>Requested</th><th>Eligible</th><th>Shortage</th><th>Open Requests</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <!-- New Request -->
+    <section id="tab-new-request" class="tab card" hidden>
+      <h2>Daily Manpower Request</h2>
+      <div class="form-grid">
+        <label>Project
+          <select id="req-project"></select>
+        </label>
+        <label>Required date
+          <input id="req-date" type="date" />
+        </label>
+        <label>Shift
+          <select id="req-shift"><option value="day">Day</option><option value="night">Night</option></select>
+        </label>
+        <label>Remarks
+          <input id="req-remarks" placeholder="Optional" />
+        </label>
+      </div>
+      <h3>Manpower lines</h3>
+      <div id="req-items"></div>
+      <button id="add-item" class="secondary">+ Add line</button>
+      <div class="actions">
+        <button id="submit-request">Create request</button>
+      </div>
+      <p id="request-msg" class="msg"></p>
+    </section>
+
+    <!-- Requests list -->
+    <section id="tab-requests" class="tab card" hidden>
+      <h2>Requests</h2>
+      <button id="refresh-requests" class="secondary">Refresh</button>
+      <div id="requests-list"></div>
+    </section>
+
+    <!-- Availability check -->
+    <section id="tab-availability" class="tab card" hidden>
+      <h2>Availability Check</h2>
+      <div class="form-grid">
+        <label>Project <select id="av-project"></select></label>
+        <label>Date <input id="av-date" type="date" /></label>
+      </div>
+      <div id="av-items"></div>
+      <button id="av-add" class="secondary">+ Add line</button>
+      <div class="actions"><button id="av-check">Check availability</button></div>
+      <table id="av-table" hidden>
+        <thead><tr><th>Category</th><th>Requested</th><th>Available</th><th>Eligible</th><th>Shortage</th><th>Reason</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
