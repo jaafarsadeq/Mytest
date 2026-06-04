@@ -183,4 +183,94 @@ def test_dashboard_summary(client):
     headers = auth_header(client, "viewer", "viewer123")
     data = client.get("/api/dashboard/summary", headers=headers).json()
     assert data["total_available_manpower"] > 0
+    assert data["total_available_equipment"] > 0
     assert any(row["project"] == "BNGL Station" for row in data["projects"])
+
+
+def test_equipment_seeded(client):
+    headers = auth_header(client, "admin", "admin123")
+    types = client.get("/api/equipment/types", headers=headers).json()
+    assert any(t["name"] == "Forklift" for t in types)
+    inventory = client.get("/api/equipment", headers=headers).json()
+    assert len(inventory) > 0
+
+
+def test_projects_have_two_supervisors_and_mqnt(client):
+    headers = auth_header(client, "admin", "admin123")
+    projects = client.get("/api/projects", headers=headers).json()
+    mqnt = next((p for p in projects if p["name"] == "DIV1 MQNT"), None)
+    assert mqnt is not None
+    # Client name mirrors the project/division name.
+    assert mqnt["client_name"] == "DIV1 MQNT"
+    assert mqnt["client_supervisor"] and mqnt["company_supervisor"]
+
+
+def test_request_with_equipment_confirmation_and_daily_board(client):
+    client_headers = auth_header(client, "client", "client123")
+    super_headers = auth_header(client, "supervisor", "super123")
+    admin_headers = auth_header(client, "admin", "admin123")
+
+    projects = client.get("/api/projects", headers=admin_headers).json()
+    mqnt = next(p for p in projects if p["name"] == "DIV1 MQNT")
+    cats = client.get("/api/categories", headers=admin_headers).json()
+    laborer = next(c for c in cats if c["name"] == "Laborer")
+    eq_types = client.get("/api/equipment/types", headers=admin_headers).json()
+    forklift = next(t for t in eq_types if t["name"] == "Forklift")
+
+    on_date = str(date.today())
+    # Client orders 10 laborers + 2 forklifts.
+    create = client.post(
+        "/api/requests",
+        headers=client_headers,
+        json={
+            "project_id": mqnt["id"],
+            "required_date": on_date,
+            "items": [{"category_id": laborer["id"], "quantity": 10}],
+            "equipment_items": [{"equipment_type_id": forklift["id"], "quantity": 2}],
+        },
+    )
+    assert create.status_code == 201, create.text
+    req = create.json()
+    rid = req["id"]
+    assert len(req["equipment_items"]) == 1
+    # Nothing confirmed yet -> full shortage.
+    assert req["items"][0]["shortage_qty"] == 10
+    assert req["equipment_items"][0]["shortage_qty"] == 2
+
+    man_item_id = req["items"][0]["id"]
+    eq_item_id = req["equipment_items"][0]["id"]
+
+    # Company supervisor confirms 7 of 10 laborers and both forklifts in place.
+    confirm = client.post(
+        f"/api/requests/{rid}/confirm",
+        headers=super_headers,
+        json={
+            "manpower": [{"item_id": man_item_id, "in_place": 7}],
+            "equipment": [{"item_id": eq_item_id, "in_place": 2}],
+        },
+    )
+    assert confirm.status_code == 200, confirm.text
+    body = confirm.json()
+    assert body["items"][0]["in_place_qty"] == 7
+    assert body["items"][0]["shortage_qty"] == 3
+    assert body["equipment_items"][0]["in_place_qty"] == 2
+    assert body["equipment_items"][0]["shortage_qty"] == 0
+
+    # A client cannot confirm in place (only supervisor/admin).
+    forbidden = client.post(
+        f"/api/requests/{rid}/confirm",
+        headers=client_headers,
+        json={"manpower": [{"item_id": man_item_id, "in_place": 10}]},
+    )
+    assert forbidden.status_code == 403
+
+    # Daily status board shows the shortage for DIV1 MQNT on this date.
+    board = client.get(
+        f"/api/dashboard/daily?on_date={on_date}", headers=admin_headers
+    ).json()
+    row = next(p for p in board["projects"] if p["project"] == "DIV1 MQNT")
+    assert row["manpower_requested"] == 10
+    assert row["manpower_in_place"] == 7
+    assert row["manpower_shortage"] == 3
+    assert row["equipment_shortage"] == 0
+    assert row["status"] == "shortage"

@@ -37,6 +37,9 @@ def create_project(
     if db.query(Project).filter(Project.name == payload.name).first():
         raise HTTPException(status_code=409, detail="Project already exists")
     data = payload.model_dump(exclude={"requirement"})
+    # Client name mirrors the project/division name when not given explicitly.
+    if not data.get("client_name"):
+        data["client_name"] = payload.name
     project = Project(**data)
     if payload.requirement is not None:
         project.requirement = ProjectRequirement(**payload.requirement.model_dump())
@@ -58,6 +61,8 @@ def update_project(
         raise HTTPException(status_code=404, detail="Project not found")
     for key, value in payload.model_dump(exclude={"requirement"}).items():
         setattr(project, key, value)
+    if not project.client_name:
+        project.client_name = project.name
     if payload.requirement is not None:
         if project.requirement is None:
             project.requirement = ProjectRequirement(**payload.requirement.model_dump())

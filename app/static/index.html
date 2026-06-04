@@ -28,6 +28,7 @@
   <main id="app-view" hidden>
     <nav class="tabs">
       <button data-tab="dashboard" class="active">Dashboard</button>
+      <button data-tab="daily">Daily Status</button>
       <button data-tab="new-request">New Request</button>
       <button data-tab="requests">Requests</button>
       <button data-tab="availability">Availability Check</button>
@@ -45,11 +46,21 @@
       </table>
     </section>
 
+    <!-- Daily Status -->
+    <section id="tab-daily" class="tab card" hidden>
+      <h2>Daily Status &mdash; Manpower &amp; Equipment</h2>
+      <div class="form-grid">
+        <label>Date <input id="daily-date" type="date" /></label>
+        <label>&nbsp;<button id="daily-load">Show status</button></label>
+      </div>
+      <div id="daily-board"></div>
+    </section>
+
     <!-- New Request -->
     <section id="tab-new-request" class="tab card" hidden>
-      <h2>Daily Manpower Request</h2>
+      <h2>Daily Manpower / Equipment Request</h2>
       <div class="form-grid">
-        <label>Project
+        <label>Project (client/division)
           <select id="req-project"></select>
         </label>
         <label>Required date
@@ -64,7 +75,10 @@
       </div>
       <h3>Manpower lines</h3>
       <div id="req-items"></div>
-      <button id="add-item" class="secondary">+ Add line</button>
+      <button id="add-item" class="secondary">+ Add manpower line</button>
+      <h3>Equipment lines</h3>
+      <div id="req-eq-items"></div>
+      <button id="add-eq-item" class="secondary">+ Add equipment line</button>
       <div class="actions">
         <button id="submit-request">Create request</button>
       </div>

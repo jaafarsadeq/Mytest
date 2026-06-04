@@ -1,23 +1,30 @@
 # Manpower & Equipment Request System
 
-An MVP web application for managing daily **manpower requests** from client
-sites (BNGL, GPP, MQ, EPC, ROO, …), checking availability against
+An MVP web application for managing daily **manpower and equipment requests**
+from client sites (BNGL, GPP, DIV1 MQNT, …), checking availability against
 **project-specific eligibility rules**, and moving requests through a
 **supervisor → operations approval** workflow — replacing manual
 WhatsApp/Excel coordination.
 
-This is **Phase 1 / Section 10 (MVP)** of the project Method Statement:
+This is **Phase 1 / Section 10 (MVP)** of the project Method Statement, plus
+an equipment module and a daily status board:
 
-- Projects & project requirements
+- Projects & project requirements (named after the client/division, e.g.
+  `DIV1 MQNT`, with both a **client supervisor** who orders and a
+  **company supervisor** from your team who responds)
 - Employees / manpower database
 - Manpower categories
-- Daily manpower request form
-- Availability & eligibility checking
+- **Equipment inventory** (cranes, forklifts, buses, … — Section 4.3)
+- Daily manpower **and equipment** request form
+- Availability & eligibility checking (manpower and equipment)
+- **Daily status board** — per project, manpower and equipment *in place*
+  vs *shortage*, based on the company supervisor's daily confirmation
 - Approval workflow (supervisor + operations)
 - Operations dashboard
 
-> Equipment, transport, HSE verification, notifications and the client
-> portal are scoped for later phases and intentionally **not** included here.
+> Transport assignments, HSE verification, notifications and the standalone
+> client portal are scoped for later phases and intentionally **not**
+> included here.
 
 ## Tech stack
 
@@ -59,10 +66,12 @@ uvicorn app.main:app --reload
 | `transport`  | `transport123` | Transport Coordinator |
 | `viewer`     | `viewer123`    | Viewer |
 
-The seed also creates the **BNGL Station** and **GPP** projects, the nine
-manpower categories, and ~78 employees with a realistic spread of passport,
-PPE, medical and assignment states so the availability checker has
-something meaningful to report.
+The seed also creates the **BNGL Station**, **GPP** and **DIV1 MQNT**
+projects (each with a client supervisor and a company supervisor), the nine
+manpower categories, ~78 employees, the eight equipment types and ~36
+equipment items — all with a realistic spread of passport, PPE, medical,
+inspection and assignment states so the availability checker and daily
+status board have something meaningful to report.
 
 ## How availability checking works (Section 4.5)
 
@@ -99,6 +108,27 @@ operations approval). Every transition is recorded in an approval audit
 trail. Availability is automatically re-checked when a request enters
 supervisor review or operations approval.
 
+## Daily status — in place vs shortage
+
+Each request line carries an **in place** quantity. Your **company
+supervisor** opens the app each day and confirms how many of each manpower
+category and equipment type are actually on site
+(`POST /api/requests/{id}/confirm`); the system computes
+**shortage = requested − in place** per line.
+
+The **Daily Status** tab (`GET /api/dashboard/daily?on_date=YYYY-MM-DD`)
+then shows, for every project active on that date:
+
+```
+DIV1 MQNT   client: Mr. Salim   our team: Mr. Jaafar      [shortage]
+  Manpower   Laborer    requested 10  in place 7  shortage 3
+  Equipment  Forklift   requested  2  in place 1  shortage 1
+```
+
+The planning availability engine (Section 4.5) still estimates how many are
+*available/eligible* in the inventory for forecasting, while the in-place
+confirmation reflects the actual situation on the ground.
+
 ## Project layout
 
 ```
@@ -109,14 +139,15 @@ app/
   models.py        ORM models (users, projects, employees, requests, …)
   schemas.py       Pydantic request/response models
   auth.py          password hashing, token signing, RBAC dependencies
-  availability.py  eligibility/availability checking engine
-  workflow.py      approval-workflow transition rules
-  seed.py          demo data (BNGL, GPP, categories, employees, users)
-  routers/         auth, projects, categories, employees,
+  availability.py  manpower + equipment availability checking engine
+  workflow.py      approval transitions + daily in-place confirmation
+  seed.py          demo data (projects, categories, equipment, employees)
+  routers/         auth, projects, categories, employees, equipment,
                    availability, requests, dashboard
   static/          index.html, style.css, app.js (the UI)
 tests/
-  test_app.py      end-to-end tests (auth, RBAC, availability, workflow)
+  test_app.py      end-to-end tests (auth, RBAC, availability, equipment,
+                   confirmation, daily status, workflow)
 ```
 
 ## Configuration
@@ -137,7 +168,7 @@ python -m pytest -q
 
 ## Roadmap (later phases)
 
-- **Phase 2:** Equipment & transport modules, HSE verification, document
+- **Phase 2:** Transport assignments, HSE verification, document
   expiry alerts, Excel/PDF export.
 - **Phase 3:** Client portal (self-service request submission & tracking).
 - **Phase 4:** AI assistant (shortage prediction, allocation suggestions,

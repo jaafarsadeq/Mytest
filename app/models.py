@@ -93,12 +93,17 @@ class Project(Base):
     __tablename__ = "projects"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    # The project name doubles as the client/division identifier, e.g. "DIV1 MQNT".
     name: Mapped[str] = mapped_column(String(128), unique=True, index=True)
     client_name: Mapped[str] = mapped_column(String(128), default="")
     site_location: Mapped[str] = mapped_column(String(128), default="")
     station: Mapped[str] = mapped_column(String(128), default="")
     working_hours: Mapped[str] = mapped_column(String(64), default="")
     supervisor_name: Mapped[str] = mapped_column(String(128), default="")
+    # Supervisor on the client side who orders manpower/equipment.
+    client_supervisor: Mapped[str] = mapped_column(String(128), default="")
+    # Supervisor from our own team who responds / confirms what is in place.
+    company_supervisor: Mapped[str] = mapped_column(String(128), default="")
     hse_contact: Mapped[str] = mapped_column(String(128), default="")
     transport_rules: Mapped[str] = mapped_column(Text, default="")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -178,6 +183,9 @@ class Request(Base):
     items: Mapped[list["RequestItem"]] = relationship(
         back_populates="request", cascade="all, delete-orphan"
     )
+    equipment_items: Mapped[list["EquipmentRequestItem"]] = relationship(
+        back_populates="request", cascade="all, delete-orphan"
+    )
     approvals: Mapped[list["RequestApproval"]] = relationship(
         back_populates="request", cascade="all, delete-orphan"
     )
@@ -192,9 +200,11 @@ class RequestItem(Base):
     request_id: Mapped[int] = mapped_column(ForeignKey("requests.id"))
     category_id: Mapped[int] = mapped_column(ForeignKey("manpower_categories.id"))
     quantity: Mapped[int] = mapped_column(Integer)
-    # Snapshot of the most recent availability check for this line.
+    # Snapshot of the most recent availability check for this line (planning).
     available_qty: Mapped[int] = mapped_column(Integer, default=0)
     eligible_qty: Mapped[int] = mapped_column(Integer, default=0)
+    # Actual quantity confirmed in place by the company supervisor (daily).
+    in_place_qty: Mapped[int] = mapped_column(Integer, default=0)
     shortage_qty: Mapped[int] = mapped_column(Integer, default=0)
     reason: Mapped[str] = mapped_column(Text, default="")
 
@@ -216,3 +226,63 @@ class RequestApproval(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     request: Mapped[Request] = relationship(back_populates="approvals")
+
+
+class EquipmentType(Base):
+    """Equipment category, e.g. Crane, Forklift, Bus (Section 4.3)."""
+
+    __tablename__ = "equipment_types"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    description: Mapped[str] = mapped_column(String(256), default="")
+
+    equipment: Mapped[list["Equipment"]] = relationship(back_populates="type")
+
+
+class Equipment(Base):
+    """Equipment inventory profile (Section 4.3)."""
+
+    __tablename__ = "equipment"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    equipment_code: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    type_id: Mapped[int] = mapped_column(ForeignKey("equipment_types.id"))
+    capacity: Mapped[str] = mapped_column(String(64), default="")
+    plate_number: Mapped[str] = mapped_column(String(64), default="")
+    current_project_id: Mapped[int | None] = mapped_column(
+        ForeignKey("projects.id"), nullable=True
+    )
+    current_location: Mapped[str] = mapped_column(String(128), default="")
+    availability_status: Mapped[AvailabilityStatus] = mapped_column(
+        Enum(AvailabilityStatus), default=AvailabilityStatus.available
+    )
+    inspection_expiry: Mapped[date | None] = mapped_column(Date, nullable=True)
+    operator_assigned: Mapped[str] = mapped_column(String(128), default="")
+    ivms_status: Mapped[bool] = mapped_column(Boolean, default=False)
+    maintenance_status: Mapped[str] = mapped_column(String(64), default="ok")
+    fuel_status: Mapped[str] = mapped_column(String(64), default="")
+    remarks: Mapped[str] = mapped_column(Text, default="")
+
+    type: Mapped[EquipmentType] = relationship(back_populates="equipment")
+    current_project: Mapped[Project | None] = relationship()
+
+
+class EquipmentRequestItem(Base):
+    """An equipment line on a request, with availability + in-place results."""
+
+    __tablename__ = "equipment_request_items"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    request_id: Mapped[int] = mapped_column(ForeignKey("requests.id"))
+    equipment_type_id: Mapped[int] = mapped_column(ForeignKey("equipment_types.id"))
+    quantity: Mapped[int] = mapped_column(Integer)
+    # Planning snapshot from the availability engine.
+    available_qty: Mapped[int] = mapped_column(Integer, default=0)
+    # Actual quantity confirmed in place by the company supervisor (daily).
+    in_place_qty: Mapped[int] = mapped_column(Integer, default=0)
+    shortage_qty: Mapped[int] = mapped_column(Integer, default=0)
+    reason: Mapped[str] = mapped_column(Text, default="")
+
+    request: Mapped[Request] = relationship(back_populates="equipment_items")
+    equipment_type: Mapped[EquipmentType] = relationship()

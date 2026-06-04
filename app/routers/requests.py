@@ -6,6 +6,8 @@ from sqlalchemy.orm import Session
 from ..auth import get_current_user, require_roles
 from ..database import get_db
 from ..models import (
+    EquipmentRequestItem,
+    EquipmentType,
     ManpowerCategory,
     Project,
     Request,
@@ -15,8 +17,8 @@ from ..models import (
     Role,
     User,
 )
-from ..schemas import RequestIn, RequestOut, TransitionIn
-from ..workflow import allowed, run_availability_check
+from ..schemas import ConfirmInPlaceIn, RequestIn, RequestOut, TransitionIn
+from ..workflow import allowed, confirm_in_place, run_availability_check
 
 router = APIRouter(prefix="/api/requests", tags=["requests"])
 
@@ -59,8 +61,10 @@ def create_request(
     project = db.get(Project, payload.project_id)
     if project is None:
         raise HTTPException(status_code=400, detail="Unknown project_id")
-    if not payload.items:
-        raise HTTPException(status_code=400, detail="At least one item is required")
+    if not payload.items and not payload.equipment_items:
+        raise HTTPException(
+            status_code=400, detail="At least one manpower or equipment line is required"
+        )
 
     request = Request(
         project_id=payload.project_id,
@@ -75,7 +79,23 @@ def create_request(
         if db.get(ManpowerCategory, item.category_id) is None:
             raise HTTPException(status_code=400, detail=f"Unknown category_id {item.category_id}")
         request.items.append(
-            RequestItem(category_id=item.category_id, quantity=item.quantity)
+            RequestItem(
+                category_id=item.category_id,
+                quantity=item.quantity,
+                shortage_qty=item.quantity,  # nothing in place yet
+            )
+        )
+    for eq in payload.equipment_items:
+        if db.get(EquipmentType, eq.equipment_type_id) is None:
+            raise HTTPException(
+                status_code=400, detail=f"Unknown equipment_type_id {eq.equipment_type_id}"
+            )
+        request.equipment_items.append(
+            EquipmentRequestItem(
+                equipment_type_id=eq.equipment_type_id,
+                quantity=eq.quantity,
+                shortage_qty=eq.quantity,
+            )
         )
     db.add(request)
     db.flush()
@@ -94,6 +114,23 @@ def recheck_availability(
     """Re-run the availability/eligibility check against current data."""
     request = _get_request(db, request_id)
     run_availability_check(db, request)
+    db.commit()
+    db.refresh(request)
+    return request
+
+
+@router.post("/{request_id}/confirm", response_model=RequestOut)
+def confirm_in_place_endpoint(
+    request_id: int,
+    payload: ConfirmInPlaceIn,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_roles(Role.supervisor, Role.admin)),
+) -> Request:
+    """Company supervisor confirms how much manpower/equipment is in place."""
+    request = _get_request(db, request_id)
+    manpower = {line.item_id: line.in_place for line in payload.manpower}
+    equipment = {line.item_id: line.in_place for line in payload.equipment}
+    confirm_in_place(db, request, manpower, equipment)
     db.commit()
     db.refresh(request)
     return request

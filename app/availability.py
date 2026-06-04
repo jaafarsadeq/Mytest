@@ -15,6 +15,8 @@ from sqlalchemy.orm import Session
 from .models import (
     AvailabilityStatus,
     Employee,
+    Equipment,
+    EquipmentType,
     ManpowerCategory,
     Project,
     ProjectRequirement,
@@ -121,3 +123,58 @@ def check_request_items(
             continue
         results.append(check_category(db, project, category, quantity, on_date))
     return results
+
+
+@dataclass
+class EquipmentAvailability:
+    type_id: int
+    type_name: str
+    requested: int
+    available: int = 0
+    shortage: int = 0
+    reasons: list[str] = field(default_factory=list)
+
+    @property
+    def reason_text(self) -> str:
+        return "; ".join(self.reasons)
+
+
+def check_equipment_type(
+    db: Session,
+    project: Project,
+    eq_type: EquipmentType,
+    requested: int,
+    on_date: date,
+) -> EquipmentAvailability:
+    """Compute availability for a single equipment type.
+
+    An item is available when its status is ``available``, its inspection is
+    valid for the date, and it is not committed to a different project.
+    """
+    result = EquipmentAvailability(
+        type_id=eq_type.id, type_name=eq_type.name, requested=requested
+    )
+    equipment = (
+        db.query(Equipment)
+        .filter(Equipment.type_id == eq_type.id)
+        .filter(Equipment.availability_status == AvailabilityStatus.available)
+        .all()
+    )
+
+    reason_counts: dict[str, int] = {}
+    for item in equipment:
+        if item.current_project_id and item.current_project_id != project.id:
+            reason_counts["assigned to another project"] = (
+                reason_counts.get("assigned to another project", 0) + 1
+            )
+            continue
+        if item.inspection_expiry is None or item.inspection_expiry < on_date:
+            reason_counts["expired/missing inspection"] = (
+                reason_counts.get("expired/missing inspection", 0) + 1
+            )
+            continue
+        result.available += 1
+
+    result.shortage = max(0, requested - result.available)
+    result.reasons = [f"{count} {reason}" for reason, count in sorted(reason_counts.items())]
+    return result

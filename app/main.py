@@ -20,6 +20,7 @@ from .routers import (
     categories,
     dashboard,
     employees,
+    equipment,
     projects,
     requests,
 )
@@ -52,6 +53,7 @@ app.include_router(auth.router)
 app.include_router(projects.router)
 app.include_router(categories.router)
 app.include_router(employees.router)
+app.include_router(equipment.router)
 app.include_router(availability.router)
 app.include_router(requests.router)
 app.include_router(dashboard.router)

@@ -11,12 +11,25 @@ from .auth import hash_password
 from .models import (
     AvailabilityStatus,
     Employee,
+    Equipment,
+    EquipmentType,
     ManpowerCategory,
     Project,
     ProjectRequirement,
     Role,
     User,
 )
+
+EQUIPMENT_TYPES = [
+    "Crane",
+    "Forklift",
+    "Pickup",
+    "Bus",
+    "Coaster",
+    "Excavator",
+    "Generator",
+    "Air compressor",
+]
 
 DEMO_USERS = [
     ("admin", "admin123", "Operations Manager", Role.admin),
@@ -57,14 +70,22 @@ def seed(db: Session) -> None:
     db.add_all(categories.values())
     db.flush()
 
+    # --- Equipment types ------------------------------------------------------
+    eq_types = {name: EquipmentType(name=name) for name in EQUIPMENT_TYPES}
+    db.add_all(eq_types.values())
+    db.flush()
+
     # --- Projects + requirements ---------------------------------------------
+    # Each project is named after the client division; client_name mirrors it.
     bngl = Project(
         name="BNGL Station",
-        client_name="BNGL",
+        client_name="BNGL Station",
         site_location="Basrah",
         station="Station 4",
         working_hours="07:00-17:00",
         supervisor_name="Site Supervisor",
+        client_supervisor="Mr. Ali (Client)",
+        company_supervisor="Mr. Hassan (Our Team)",
         hse_contact="HSE Officer",
         transport_rules="Transport from camp mandatory",
         requirement=ProjectRequirement(
@@ -82,6 +103,8 @@ def seed(db: Session) -> None:
         station="Unit 2",
         working_hours="06:00-16:00",
         supervisor_name="Site Supervisor",
+        client_supervisor="Mr. Omar (Client)",
+        company_supervisor="Mr. Karim (Our Team)",
         hse_contact="HSE Officer",
         transport_rules="Transport from camp",
         requirement=ProjectRequirement(
@@ -92,8 +115,65 @@ def seed(db: Session) -> None:
             notes="Plant induction + medical required.",
         ),
     )
-    db.add_all([bngl, gpp])
+    mqnt = Project(
+        name="DIV1 MQNT",
+        client_name="DIV1 MQNT",
+        site_location="Majnoon",
+        station="Division 1",
+        working_hours="07:00-17:00",
+        supervisor_name="Site Supervisor",
+        client_supervisor="Mr. Salim (Client)",
+        company_supervisor="Mr. Jaafar (Our Team)",
+        hse_contact="HSE Officer",
+        transport_rules="Transport from camp",
+        requirement=ProjectRequirement(
+            required_passport="BGC",
+            requires_ppe=True,
+            requires_medical=False,
+            transport_required=True,
+            notes="BGC passport + PPE required.",
+        ),
+    )
+    db.add_all([bngl, gpp, mqnt])
     db.flush()
+
+    # --- Equipment inventory --------------------------------------------------
+    valid_inspection = today + timedelta(days=200)
+    expired_inspection = today - timedelta(days=5)
+    eq_rng = random.Random(7)
+    eq_counter = 0
+    for type_name, count in [
+        ("Crane", 3),
+        ("Forklift", 6),
+        ("Pickup", 8),
+        ("Bus", 5),
+        ("Coaster", 4),
+        ("Excavator", 3),
+        ("Generator", 4),
+        ("Air compressor", 3),
+    ]:
+        eq_type = eq_types[type_name]
+        for _ in range(count):
+            eq_counter += 1
+            inspection_expired = eq_rng.random() < 0.15
+            assigned_gpp = eq_rng.random() < 0.1
+            db.add(
+                Equipment(
+                    equipment_code=f"EQP{eq_counter:04d}",
+                    type_id=eq_type.id,
+                    capacity="-",
+                    plate_number=f"PL-{1000 + eq_counter}",
+                    current_project_id=gpp.id if assigned_gpp else None,
+                    current_location="Yard",
+                    availability_status=AvailabilityStatus.available,
+                    inspection_expiry=(
+                        expired_inspection if inspection_expired else valid_inspection
+                    ),
+                    ivms_status=eq_rng.random() < 0.8,
+                    maintenance_status="ok",
+                    fuel_status="full",
+                )
+            )
 
     # --- Users ----------------------------------------------------------------
     for username, password, full_name, role in DEMO_USERS:
