@@ -1,0 +1,18 @@
+services:
+  whatsapp-bridge:
+    build: .
+    container_name: whatsapp-bridge
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # Inside the container the bridge must listen on all interfaces so the
+      # published port works. Protect with BRIDGE_TOKEN (set in .env).
+      BRIDGE_HOST: 0.0.0.0
+    ports:
+      # Bind to localhost on the VM by default; expose externally only via SSH
+      # tunnel or a reverse proxy with auth.
+      - "127.0.0.1:3037:3037"
+    volumes:
+      - ./data:/app/data
+    # whatsapp-web.js + Chromium need a bit more shared memory than default.
+    shm_size: "1gb"
